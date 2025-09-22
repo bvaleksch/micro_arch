@@ -1,0 +1,42 @@
+# Python cache
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.pdb
+*.egg-info/
+.eggs/
+
+# Byte-compiled / optimized / DLL files
+*.so
+
+# Virtual environments
+venv/
+.env/
+.mypy_cache/
+.pytest_cache/
+.tox/
+.coverage
+coverage.xml
+htmlcov/
+
+# SQLite database file
+db.db
+
+# VS Code and other IDE configs
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Test reports
+junit*.xml
+
+# Static build output (if later added)
+dist/
+build/

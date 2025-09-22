@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Todo API UI</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    :root { --border:#ddd; --muted:#666; --chip:#f1f1f1; }
+    * { box-sizing: border-box; }
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; max-width: 900px; margin: 24px auto; padding: 0 12px; }
+    h1 { margin: 0 0 6px; }
+    small { color: var(--muted); }
+    form, .card { border: 1px solid var(--border); border-radius: 12px; padding: 12px; margin: 12px 0; }
+    input, select, button { padding: 8px 10px; margin-right: 8px; }
+    input[type="text"], input[type="datetime-local"], select { border:1px solid var(--border); border-radius:8px; }
+    button { border:1px solid var(--border); border-radius:8px; cursor:pointer; }
+    .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+    .todo { display: flex; align-items: center; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid #eee; }
+    .todo:last-child { border-bottom: 0; }
+    .lbl { background:var(--chip); border-radius: 999px; padding: 2px 8px; margin-left: 6px; font-size: 12px; display: inline-block; }
+    .muted { color:#777; font-size: 12px; }
+    .actions button { margin-left: 6px; }
+    .success { color: #0a7; }
+    .error { color: #c00; }
+  </style>
+</head>
+<body>
+  <h1>Todo API UI</h1>
+  <small>Single-page UI using <code>fetch()</code> against your FastAPI endpoints.</small>
+
+  <div class="card">
+    <h3>Create Label</h3>
+    <form id="labelForm" class="row" autocomplete="off">
+      <input type="text" id="labelName" placeholder="Label name (e.g. urgent)" required />
+      <button type="submit">Add Label</button>
+      <span id="labelMsg" class="muted"></span>
+    </form>
+    <div><strong>Labels:</strong> <span id="labelsList" class="muted">loading…</span></div>
+  </div>
+
+  <div class="card">
+    <h3 id="todoFormTitle">Create Todo</h3>
+    <form id="todoForm" class="row" autocomplete="off">
+      <input type="hidden" id="editingId" />
+      <input type="text" id="todoTitle" placeholder="Title" required />
+      <input type="datetime-local" id="todoDue" />
+      <input type="text" id="todoLabels" placeholder="labels (comma-separated)" />
+      <button type="submit" id="todoBtn">Add Todo</button>
+      <button type="button" id="cancelEditBtn" style="display:none;">Cancel</button>
+      <span id="todoMsg" class="muted"></span>
+    </form>
+  </div>
+
+  <div class="card">
+    <h3>Todos</h3>
+    <div class="row">
+      <label>Done:
+        <select id="filterDone">
+          <option value="">(all)</option>
+          <option value="false">false</option>
+          <option value="true">true</option>
+        </select>
+      </label>
+      <label>Label:
+        <input type="text" id="filterLabel" placeholder="label (optional)" />
+      </label>
+      <button id="refreshBtn" type="button">Refresh</button>
+      <span id="listMsg" class="muted"></span>
+    </div>
+    <div id="todosList">loading…</div>
+  </div>
+
+<script>
+"use strict";
+
+const $ = (sel) => document.querySelector(sel);
+
+async function api(path, opts = {}) {
+  const res = await fetch(path, Object.assign({ headers: { "Content-Type": "application/json" } }, opts));
+  if (!res.ok) {
+    let msg = res.status + " " + res.statusText;
+    try { msg += " — " + await res.text(); } catch {}
+    throw new Error(msg);
+  }
+  const ct = res.headers.get("content-type") || "";
+  return ct.includes("application/json") ? res.json() : res.text();
+}
+
+// ---- Labels ----
+async function loadLabels() {
+  try {
+    const labels = await api("/labels");
+    if (!labels.length) { $("#labelsList").textContent = "(none)"; return; }
+    $("#labelsList").innerHTML = labels.map(l => `<span class="lbl">${escapeHtml(l.name)}</span>`).join(" ");
+  } catch (e) {
+    $("#labelsList").textContent = "error loading labels";
+    console.error(e);
+  }
+}
+
+$("#labelForm").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  $("#labelMsg").className = "muted";
+  $("#labelMsg").textContent = "";
+  const name = $("#labelName").value.trim().toLowerCase();
+  if (!name) return;
+  try {
+    await api("/labels", { method: "POST", body: JSON.stringify({ name }) });
+    $("#labelName").value = "";
+    $("#labelMsg").textContent = "Created";
+    $("#labelMsg").className = "muted success";
+    await loadLabels();
+    await loadTodos();
+  } catch (e) {
+    $("#labelMsg").textContent = e.message.includes("409") ? "Already exists" : "Error: " + e.message;
+    $("#labelMsg").className = "muted error";
+  }
+});
+
+// ---- Todos ----
+function buildTodosQuery() {
+  const params = new URLSearchParams();
+  const done = $("#filterDone").value;
+  const label = $("#filterLabel").value.trim().toLowerCase();
+  if (done) params.set("done", done);
+  if (label) params.set("label", label);
+  return "/todos" + (params.toString() ? "?" + params.toString() : "");
+}
+
+async function loadTodos() {
+  $("#todosList").textContent = "loading…";
+  $("#listMsg").textContent = "";
+  try {
+    const todos = await api(buildTodosQuery());
+    if (!todos.length) { $("#todosList").textContent = "(no todos)"; return; }
+    $("#todosList").innerHTML = todos.map(renderTodoRow).join("");
+  } catch (e) {
+    $("#todosList").textContent = "error loading todos";
+    $("#listMsg").textContent = e.message;
+    console.error(e);
+  }
+}
+
+function renderTodoRow(t) {
+  const labels = (t.labels || []).map(n => `<span class="lbl">${escapeHtml(n)}</span>`).join(" ");
+  const due = t.due_date ? new Date(t.due_date).toLocaleString() : "";
+  return `
+    <div class="todo">
+      <div>
+        <input type="checkbox" ${t.done ? "checked" : ""} onchange="toggleDone(${t.id}, this.checked)" />
+        <strong>${escapeHtml(t.title)}</strong>
+        ${labels ? " " + labels : ""}
+        ${due ? ` <span class="muted">• due ${escapeHtml(due)}</span>` : ""}
+      </div>
+      <div class="actions">
+        <button type="button" onclick="startEdit(${t.id})">✏️ Edit</button>
+        <span class="muted">#${t.id}</span>
+      </div>
+    </div>
+  `;
+}
+
+async function toggleDone(id, done) {
+  try {
+    await api(`/todos/${id}`, { method: "PATCH", body: JSON.stringify({ done }) });
+    await loadTodos();
+  } catch (e) {
+    alert("Failed to update: " + e.message);
+    await loadTodos();
+  }
+}
+
+// --- Edit flow ---
+async function startEdit(id) {
+  try {
+    // Load current list and find the todo (keeps API simple; you could add GET /todos/{id} if desired)
+    const todos = await api(buildTodosQuery().split("?")[0]); // plain /todos
+    const todo = todos.find(x => x.id === id);
+    if (!todo) return;
+
+    $("#editingId").value = id;
+    $("#todoTitle").value = todo.title;
+    $("#todoLabels").value = (todo.labels || []).join(", ");
+    if (todo.due_date) {
+      const d = new Date(todo.due_date);
+      const local = new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0,16);
+      $("#todoDue").value = local;
+    } else {
+      $("#todoDue").value = "";
+    }
+    $("#todoFormTitle").textContent = `Edit Todo #${id}`;
+    $("#todoBtn").textContent = "Update Todo";
+    $("#cancelEditBtn").style.display = "inline-block";
+    $("#todoMsg").textContent = `Editing #${id}`;
+    $("#todoMsg").className = "muted";
+  } catch (e) {
+    alert("Failed to load todo for edit: " + e.message);
+  }
+}
+
+function cancelEdit() {
+  $("#editingId").value = "";
+  $("#todoTitle").value = "";
+  $("#todoDue").value = "";
+  $("#todoLabels").value = "";
+  $("#todoFormTitle").textContent = "Create Todo";
+  $("#todoBtn").textContent = "Add Todo";
+  $("#cancelEditBtn").style.display = "none";
+  $("#todoMsg").textContent = "Canceled edit";
+  $("#todoMsg").className = "muted";
+}
+
+$("#cancelEditBtn").addEventListener("click", cancelEdit);
+
+$("#todoForm").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  $("#todoMsg").className = "muted";
+  $("#todoMsg").textContent = "";
+
+  const id = $("#editingId").value;
+  const title = $("#todoTitle").value.trim();
+  const dueRaw = $("#todoDue").value; // yyyy-MM-ddTHH:mm
+  const labelsStr = $("#todoLabels").value.trim();
+  const labels = labelsStr ? labelsStr.split(",").map(s => s.trim().toLowerCase()).filter(Boolean) : [];
+
+  const body = { title, labels };
+  if (dueRaw) body.due_date = new Date(dueRaw).toISOString();
+
+  try {
+    if (id) {
+      await api(`/todos/${id}`, { method: "PATCH", body: JSON.stringify(body) });
+      $("#todoMsg").textContent = `Updated #${id}`;
+      $("#todoMsg").className = "muted success";
+    } else {
+      await api("/todos", { method: "POST", body: JSON.stringify(body) });
+      $("#todoMsg").textContent = "Created";
+      $("#todoMsg").className = "muted success";
+    }
+
+    cancelEdit(); // also resets the form & labels
+    await loadTodos();
+    await loadLabels();
+  } catch (e) {
+    $("#todoMsg").textContent = "Error: " + e.message;
+    $("#todoMsg").className = "muted error";
+  }
+});
+
+$("#refreshBtn").addEventListener("click", loadTodos);
+$("#filterDone").addEventListener("change", loadTodos);
+$("#filterLabel").addEventListener("input", () => { /* optional debounce */ });
+
+function escapeHtml(s){return s.replace(/[&<>"']/g,m=>({ "&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;" }[m]));}
+
+// initial load
+loadLabels().then(loadTodos);
+</script>
+</body>
+</html>
